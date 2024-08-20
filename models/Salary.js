@@ -27,7 +27,7 @@ const ClockRecordSchema = new Schema({
       { type: Number }
   },
   
-  workDuration: { type: Number } // Duration in hours
+  workDuration: { type: Number } 
 });
 
 

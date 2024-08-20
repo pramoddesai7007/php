@@ -174,11 +174,9 @@ router.put('/uploadEmp', upload.single('profilePicture'), jwtMiddleware, async (
 
   router.get('/taskCounts', jwtMiddleware, async (req, res) => {
     try {
-      // Retrieve the user's ID from the JWT token
       const userId = req.user.subEmployeeId ?? req.user.employeeId;
-      console.log(userId); // Make sure you have the user ID available in the request
-      const currentDate = new Date(); // Get the current date
-      // Fetch the counts from your database
+      console.log(userId); 
+  
       const receivedTasks = await Task.countDocuments({ assignTo: userId });
       const completedTasks = await Task.countDocuments({ assignTo: userId, status: 'completed' });
       const pendingTasks = await Task.countDocuments({ assignTo: userId, status: 'pending' }); // Adjusted query for pending tasks with deadline less than or equal to current date
@@ -845,14 +843,11 @@ router.get('/listNEW', jwtMiddleware, async (req, res) => {
     const subEmployees = await SubEmployee.find({ adminCompanyName });
     const subEmployeeIds = subEmployees.map(subEmployee => subEmployee._id);
 
-
-    // Find the company ID associated with the given admin user ID
     const userCompany = await Employee.findOne({ _id: userId }).select('adminCompanyName');
     if (!userCompany) {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    // Find all admins from the same company as the given admin user
     const companyAdmins = await Employee.find({
       adminUserId: req.user.adminUserId,
       adminCompanyName: userCompany.adminCompanyName
@@ -884,20 +879,32 @@ router.get('/listNEW', jwtMiddleware, async (req, res) => {
       }
     }
 
-    const tasks = await Task.find(taskFilter).populate('assignTo', 'name').populate('assignedBy', 'name');
-
+    // Fetch tasks without automatic population
+    const tasks = await Task.find(taskFilter)
+      .populate('assignTo', 'name');
 
     if (!tasks || tasks.length === 0) {
       return res.status(404).json({ error: 'Tasks not found' });
     }
 
-    // Send the list of tasks as a JSON response
-    res.json({ tasks });
+    // Manually populate assignedBy based on assignedByModel
+    const populatedTasks = await Promise.all(tasks.map(async task => {
+      if (task.assignedByModel === 'Employee') {
+        task.assignedBy = await Employee.findById(task.assignedBy).select('name');
+      } else if (task.assignedByModel === 'SubEmployee') {
+        task.assignedBy = await SubEmployee.findById(task.assignedBy).select('name');
+      }
+      return task;
+    }));
+
+    res.json({ tasks: populatedTasks });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });
+
+
 
 
 
@@ -1273,7 +1280,13 @@ router.get('/tasks/pendingNEW', jwtMiddleware, async (req, res) => {
 
       const tasks = await Task.find(filter)
         .populate('assignTo', 'name')
-        .populate('assignedBy', 'name');
+        .populate({
+          path: 'assignedBy',
+          model: function(doc) {
+            return doc.assignedByModel;  
+          },
+          select: 'name' 
+        });
 
       if (!tasks || tasks.length === 0) {
         return res.status(200).json({ status: 0, message: 'No pending tasks found for this employee', tasks });
@@ -1945,6 +1958,7 @@ router.get('/tasks/completedNew', jwtMiddleware, async (req, res) => {
       const tasks = await Task.find(filter)
         .populate('assignTo', 'name')
         .populate('assignedBy', 'name');
+        
 
       if (!tasks || tasks.length === 0) {
         return res.status(200).json({ status: 0, message: 'No pending tasks found for this employee', tasks });
@@ -2535,6 +2549,8 @@ router.get('/tasks/overdueNEW', jwtMiddleware, async (req, res) => {
       taskFilter.assignTo = { $in: [assignTo] };
     }
 
+
+    
     const overdueTasks = await Task.find(taskFilter)
       .populate('assignTo', 'name')
       .populate('assignedBy', 'name');
@@ -2549,6 +2565,89 @@ router.get('/tasks/overdueNEW', jwtMiddleware, async (req, res) => {
     return res.status(500).json({ error: 'Internal Server Error' });
   }
 });
+
+router.get('/tasks/overdueNEW', jwtMiddleware, async (req, res) => {
+  try {
+    const employeeId = req.user.employeeId;
+    const adminUserId = req.user.adminUserId;
+    const adminCompanyName = req.user.adminCompanyName;
+
+    const { assignTo } = req.query;
+    const today = new Date();
+
+    // Find all sub-employees under the same company
+    const subEmployees = await SubEmployee.find({ adminCompanyName });
+    const subEmployeeIds = subEmployees.map(subEmployee => subEmployee._id);
+
+    // Check if the current user belongs to the company
+    const userCompany = await Employee.findOne({ _id: employeeId }).select('adminCompanyName');
+    if (!userCompany) {
+      const tasks = await Task.find({
+        assignTo: employeeId,
+        status: { $in: ['pending', 'overdue'] },
+        deadlineDate: { $lt: today }
+      })
+        .populate('assignTo', 'name')
+        .populate({
+          path: 'assignedBy',
+          select: 'name',
+          model: 'SubEmployee' // Assuming assignedBy is always a SubEmployee when this condition is met
+        });
+
+      if (!tasks || tasks.length === 0) {
+        return res.status(200).json({ status: 0, message: 'Overdue List is Empty', tasks });
+      }
+      return res.status(200).json({ status: 1, message: 'Successfully fetched overdue tasks', tasks });
+    }
+
+    // Find all admins under the same company
+    const companyAdmins = await Employee.find({
+      adminUserId,
+      adminCompanyName
+    });
+
+    if (!companyAdmins || companyAdmins.length === 0) {
+      return res.status(404).json({ error: 'Admins not found for the company' });
+    }
+
+    const adminIds = companyAdmins.map(admin => admin._id);
+
+    let taskFilter = {
+      status: { $in: ['pending', 'overdue'] },
+      deadlineDate: { $lt: today },
+      $or: [
+        { assignedBy: { $in: subEmployeeIds }, assignedByModel: 'SubEmployee' },
+        { assignedBy: { $in: adminIds }, assignedByModel: 'Employee' }
+      ]
+    };
+
+    if (assignTo) {
+      taskFilter.assignTo = { $in: [assignTo] };
+    }
+
+    const overdueTasks = await Task.find(taskFilter)
+      .populate('assignTo', 'name')
+      .populate({
+        path: 'assignedBy',
+        select: 'name',
+        populate: {
+          path: 'assignedByModel',
+          model: (doc) => doc.assignedByModel === 'Employee' ? 'Employee' : 'SubEmployee'
+        }
+      });
+
+    if (!overdueTasks || overdueTasks.length === 0) {
+      return res.status(200).json({ status: 0, message: 'Overdue List is Empty', overdueTasks });
+    }
+
+    return res.status(200).json({ status: 1, message: 'Successfully fetched Overdue tasks', overdueTasks });
+  } catch (error) {
+    console.error('Error:', error);
+    return res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+
 
 
 

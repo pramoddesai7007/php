@@ -186,6 +186,11 @@ const taskSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'SubEmployee'
   },
+  assignedByModel: {
+    type: String,
+    enum: ['Employee', 'SubEmployee'],
+    required: true,
+  },
   remarkToList: [{
     remark: { type: String },
     timestamp: { type: Date },

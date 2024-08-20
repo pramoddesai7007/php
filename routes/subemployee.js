@@ -68,40 +68,48 @@ router.get('/subemployees/clock-inn', jwtMiddleware, async (req, res) => {
 router.post('/login', async (req, res) => {
   const { email, password } = req.body;
 
+
+  console.log(email);
+  console.log(password);
+
   try {
     // Find the sub-employee by email
     const subEmployee = await SubEmployee.findOne({ email });
 
+
+    console.log("false");
     if (!subEmployee) {
 
-
       const salesEmployee = await Sales.findOne({ email });
-
+      console.log(salesEmployee);
       const isPasswordValid = await bcrypt.compare(password, salesEmployee.password);
 
-      console.log(isPasswordValid)
+
+      console.log("isPasswordValid");
+
+
       if (!isPasswordValid) {
         return res.status(401).json({ error: 'Invalid credentials' });
+
       }
 
+      console.log("isPasswordValid");
+
+
       const token = jwt.sign(
-        { subEmployeeId: Sales._id, email: Sales.email, role: 'Sales emp', adminCompanyName: adminCompanyName.adminCompanyName, name: Sales.name },
+        { subEmployeeId: Sales._id, email: Sales.email,
+           role: 'Sales emp', adminCompanyName: salesEmployee.adminCompanyName,
+            name: Sales.name },
         SUBEMPLOYEE_JWT_SECRET,
       );
 
 
+      console.log("token");
 
-      console.log(token)
+
       return res.status(200).json({ message: 'Authentication successful', token });
-    
-
-
-
-
-
     }
 
-    // Verify the password
     const isPasswordValid = await bcrypt.compare(password, subEmployee.password);
 
     console.log(isPasswordValid)
@@ -109,12 +117,13 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
+
     // Create a JWT token with the sub-employee's information
     const token = jwt.sign(
       { subEmployeeId: subEmployee._id, email: subEmployee.email, role: 'sub-employee', adminCompanyName: subEmployee.adminCompanyName, name: subEmployee.name, type: subEmployee.type },
       SUBEMPLOYEE_JWT_SECRET,
     );
-    console.log(token)
+    
     return res.status(200).json({ message: 'Authentication successful', token });
   } catch (error) {
     res.status(500).json({ error: 'Internal Server Error' });
